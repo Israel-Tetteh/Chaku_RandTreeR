@@ -8,7 +8,7 @@ ui <- navbarPage(
     HTML("
       /* Set the background image */
       body {
-        background: url('forest.jpg') no-repeat center center fixed;
+        background: url('Mango-Orchard.png') no-repeat center center fixed;
         background-size: cover;
         font-family: Arial, sans-serif;
       }
@@ -74,7 +74,7 @@ ui <- navbarPage(
                fileInput("fileInput", "Upload File", accept = c(".csv", ".txt",".xlsx")),
                checkboxInput(inputId = "checkin",label = "Bulk KML File",value = TRUE),
                actionButton("submit_1", "SUBMIT", class = "btn",width = "100%"),br(), hr(),
-               actionButton("export_1", "EXPORT FILE", class = "btn",width = "100%"),
+               downloadButton("export_1", "EXPORT FILE", class = "btn",width = "100%"),
                width = 4
              ),
              mainPanel(
@@ -89,16 +89,15 @@ ui <- navbarPage(
                fileInput(inputId = "kmltrans",label = "File Upload",placeholder = "Upload KML File",accept = ".kml"),
                numericInput(inputId = "sample_size",label = "Enter Sample Size",value = 10 , min = 1 ,max = 100 ,step = 1),
                br(),
-               numericInput(inputId = "plt_dist",label = "Enter Planting Size",value = 10,min = 1, max = 100 ,step = 1 ),
+               numericInput(inputId = "plt_dist",label = "Enter Planting Distance (meters)",value = 10,min = 1, max = 100 ,step = 1 ),
                br(),
-               numericInput(inputId = "sample_dist",label = "Enter Minimum Sampling Distance" ,value = 10 ,min = 1 ,max = 100, step = 1),br(),
+               numericInput(inputId = "sample_dist",label = "Enter Minimum Sampling Distance (meters)" ,value = 10 ,min = 1 ,max = 100, step = 1),br(),
+               textInput(inputId = "farmer_name",label = "Enter Farmer's Name",placeholder = "Alex Narh"),br(),
                actionButton(inputId = "Submit_2", label = "SUBMIT",width = "100%"),
                br(),br(),
-               textInput(inputId = "farmer_name",label = "Enter Farmer's Name",placeholder = "Alex Narh"),br(),
-               actionButton(inputId = "download_1" , label = "DOWNLOAD FILE ",width = "100%")
+               downloadButton(outputId = "download_1" , label = "DOWNLOAD FILE ",width = "100%")
                
-             ),mainPanel(div(class = "card",
-                             h3( ), # left blank to later comment
+             ),mainPanel(div(class = "card", # left blank to later comment
                              div(class = "plot-container", withSpinner(plotOutput("plot_rtrees")))
              ))
            ))
@@ -122,7 +121,7 @@ server <- function(input, output, session) {
     if (all(geometry_type == "POINT")) {
       polygon_data <- spatial_data %>%
         summarise(geometry = st_union(geometry)) %>%
-        st_concave_hull(ratio = 0.1) # adjust to make boundary more accurate
+        st_concave_hull(ratio = 0.1) # adjust to make polygon boundary more accurate
     } else if (all(geometry_type %in% c("POLYGON", "MULTIPOLYGON"))) {
   polygon_data <- spatial_data
 } else {
@@ -130,10 +129,10 @@ server <- function(input, output, session) {
     }
     
     # Transform polygon to projected CRS for accurate distance calculations
-    polygon_data_projected <- st_transform(polygon_data, 3857)
+    polygon_data_projected <- st_transform(polygon_data, 3857) # 3857 is the best for West African calculations
     
     # Grid generation
-    planting_distance <- PLANTING_DISTANCE   # in meters (required)
+    planting_distance <- PLANTING_DISTANCE   # in meters 
     bbox <- st_bbox(polygon_data_projected)
     x_seq <- seq(bbox["xmin"], bbox["xmax"], by = planting_distance)
     y_seq <- seq(bbox["ymin"], bbox["ymax"], by = planting_distance)
@@ -154,11 +153,10 @@ server <- function(input, output, session) {
     }
     
     
-    # Minimum distance between sampled points (in meters)
+    # Minimum distance between sampled points 
     min_distance <- MINIMUM_DISTANCE # required
     
     # Spatial thinning algorithm
-    # For reproducibility
     shuffled_points <- grid_points_within[sample(nrow(grid_points_within)), ]
     sampled_points <- list()
     
@@ -187,119 +185,45 @@ server <- function(input, output, session) {
     sampled_points_sf$Description <- "Sampled Mango Tree"
     
     # Visualization of sampled points
-   plot_rand <- ggplot() +
+    plot_rand <- ggplot() +
       geom_sf(data = polygon_data, fill = "lightgreen", color = "black") +
       geom_sf(data = st_transform(grid_points_within, st_crs(polygon_data)), color = "darkgreen", size = 1, alpha = 0.5) +
       geom_sf(data = st_transform(sampled_points_sf, st_crs(polygon_data)), color = "red", size = 3) +
       geom_sf(data = spatial_data )+
       theme_minimal() +
-      labs(title = "Dispersed Sampled Mango Trees", subtitle = paste(sample_size, "Trees for Data Collection"))
+      labs(title = "Randomly Selected Trees for Data Collection", subtitle = paste(sample_size, "Trees marked as red points"))
     
-    return(plot_rand)
+    return(list(plot_rand = plot_rand, sampled_points_sf = sampled_points_sf))
   }
   
-  # For randomization lets define the server inputs.
-  chaku_hold_1 <- eventReactive(input$Submit_2,{
-    Chaku_sample_funct(FILE_PATH = input$kmltrans$datapath ,
-                       
-                       PLANTING_DISTANCE = input$plt_dist,
-                       
-                       SAMPLE_SIZE = input$sample_size ,
-                       
-                       MINIMUM_DISTANCE =  input$sample_dist
-                       
-                       
-                       )
+  # Reactive to hold the result of Chaku_sample_funct
+  chaku_result <- eventReactive(input$Submit_2, {
+    Chaku_sample_funct(
+      FILE_PATH = input$kmltrans$datapath,
+      PLANTING_DISTANCE = input$plt_dist,
+      SAMPLE_SIZE = input$sample_size,
+      MINIMUM_DISTANCE = input$sample_dist
+    )
   })
   
+  # Render the plot
   output$plot_rtrees <- renderPlot({
-    chaku_hold_1()
-    
+    req(chaku_result()) # Ensure the reactive is available
+    chaku_result()$plot_rand
   })
   
-  
-  
-}
+  output$download_1 <- downloadHandler(
+    filename = function() {
+      paste0(input$farmer_name, ".kml")
+    },
+    content = function(file) {
+      req(chaku_result())  # Ensure the reactive is available
+      sf::st_write(chaku_result()$sampled_points_sf, file, driver = "KML")
+    }
+  )
 
+}
 shinyApp(ui, server)
  
-
-
-##########
-
-# Function to covert geopoint to excel file.
-
-
-
-# Load required packages
-library(readxl)  # To read the Excel file
-library(xml2)    # To handle XML generation
-
-#~~~~~~~~~~~~~ Function to create the KML file structure ~~~~~~~~~~~~#
-create_kml <- function(coordinate_sets) {
-  kml_doc <- xml_new_root("kml", xmlns = "http://www.opengis.net/kml/2.2")
-  document_node <- xml_add_child(kml_doc, "Document")
-  
-  for (coords in coordinate_sets) {
-    placemark <- xml_add_child(document_node, "Placemark")
-    point <- xml_add_child(placemark, "Point")
-    coord_string <- paste(coords$longitude, coords$latitude, coords$altitude, sep = ",")
-    xml_add_child(point, "coordinates", coord_string)
-  }
-  
-  return(kml_doc)
-}
-
-#~~~~~ Function to process coordinate strings from the Excel file ~~~~~~#
-process_coordinates <- function(coordinate_string) {
-  coordinate_sets <- list()
-  
-  # Split multiple coordinate sets by semicolon
-  coordinates_list <- unlist(strsplit(coordinate_string, ";"))
-  
-  for (coord in coordinates_list) {
-    # Split longitude, latitude, and altitude
-    parts <- unlist(strsplit(trimws(coord), " "))
-    if (length(parts) >= 3) {  # Expect at least longitude, latitude, altitude
-      coordinate_sets <- append(coordinate_sets, list(list(
-        latitude = as.numeric(parts[1]),
-        longitude = as.numeric(parts[2]),
-        altitude = as.numeric(parts[3])
-      )))
-    }
-  }
-  
-  return(coordinate_sets)
-}
-
-#~~~~~~~~~~~~~~~~~~ End of  process coordinate function ~~~~~~~~~~~~~~#
-# Read the geographical file for kml.
-Geograph_data <- read_xlsx("C:\\Users\\rakro\\Downloads\\Somanya farm boundaries.xlsx")
-head(Geograph_data)
-colnames(Geograph_data)
-
-# A for loop to get the kml file for  each farmer.
-rows_to_loop <- nrow(Geograph_data) # get the number of rows of the data.
-
-for (take_row in seq_len(rows_to_loop)) {
-  
-  row_hold <- Geograph_data[ take_row , ]
-  
-  get_geopoint <- row_hold["geographic_boundaries"] # get row selected  geoboundaries
-  get_farmer_name <- row_hold["full_name"] # get the farmer name to be used to save the kml file produced.
-  
-  # Process each row to extract coordinates
-  all_coordinates <- list()
-  for (coordinate_string in get_geopoint) {
-    all_coordinates <- append(all_coordinates, process_coordinates(coordinate_string))
-  }
-  
-  # Create the KML structure
-  kml_doc <- create_kml(all_coordinates)
-  
-  # Save the KML to file
-  output_file <-  paste0(get_farmer_name,"kml Geo_boundaries.kml")  # file name you will like to use .kml
-  
-  write_xml(kml_doc, file = output_file)
-  
-}
+ 
+ 
