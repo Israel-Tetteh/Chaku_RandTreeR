@@ -6,6 +6,7 @@ library(xml2)
 library(sf)
 library(dplyr)
 library(ggplot2)
+library(shinyalert)
 
 #~~~~~~~~~~~~~ Function to create the KML file structure with styled polygons ~~~~~~~~~~~~#
 ui <- navbarPage(
@@ -75,6 +76,7 @@ ui <- navbarPage(
                h1("WELCOME TO CHAKU RandTreeR")
            )
   ),br(),
+  useShinyalert(),
   tabPanel("Convert to KML File",
            sidebarLayout(
              sidebarPanel(
@@ -83,8 +85,12 @@ ui <- navbarPage(
                downloadButton(outputId = "download_01",label = "DOWNLOAD FOLDER!",icon = icon("download")),
                width = 4
              ),
-             mainPanel(textOutput(outputId = "graph_a"))) 
-  ),br(),
+             mainPanel(
+               div(class = "card",
+                   h3( ), # left blank to later comment
+                   div(class = "plot-container")
+               )) 
+           )),br(),
   tabPanel("Randomize Tree Layout",
            sidebarLayout(
              sidebarPanel(
@@ -204,10 +210,25 @@ server <- function(input, output, session) {
     return(created_files)
   }
   
-  
+ 
+   
+
   reactive_files <- eventReactive(input$submit_1, {
     req(input$file_rec)  # Ensure a file is uploaded
-    file_conversion(input$file_rec$datapath)  # Generate KML files
+    
+    files <- NULL
+    withProgress(message = "Generating KML Files...", value = 0, {
+      files <- file_conversion(input$file_rec$datapath)  # Generate KML files
+      incProgress(1, detail = "Finalizing...")
+    })
+    
+    files
+  })
+  
+  # Alert window.
+  observeEvent(input$submit_1, {
+    req(reactive_files())  # Ensure files are generated
+    shinyalert("Done!", "KML files are ready for download.", type = "success", timer = 3000)
   })
   
   output$download_01 <- downloadHandler(
@@ -220,11 +241,6 @@ server <- function(input, output, session) {
     },
     contentType = "application/zip"
   )
-  
-  # Cleanup session files on session end
-  session$onSessionEnded(function() {
-    unlink(kml_dir(), recursive = TRUE)
-  })
   
   # Function to process spatial data and sample points
   Chaku_sample_funct <- function(FILE_PATH, PLANTING_DISTANCE, SAMPLE_SIZE, MINIMUM_DISTANCE) {
@@ -342,7 +358,3 @@ server <- function(input, output, session) {
 shinyApp(ui, server)
 
 
-
- 
- 
- 
