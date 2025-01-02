@@ -1,12 +1,12 @@
-library(shiny) # load shiny app.
 library(shiny)
 library(shinycssloaders)
 library(readxl)
-library(xml2) 
+library(xml2)
 library(sf)
 library(dplyr)
 library(ggplot2)
 library(shinyalert)
+
 
 #~~~~~~~~~~~~~ Function to create the KML file structure with styled polygons ~~~~~~~~~~~~#
 ui <- navbarPage(
@@ -73,7 +73,7 @@ ui <- navbarPage(
   tabPanel(icon = icon("home"),
            "Home",
            div(id = "card-container",
-               h1("WELCOME TO CHAKU RandTreeR")
+               h1("WELCOME TO CHAKU Tree SampleR")
            )
   ),br(),
   useShinyalert(),
@@ -81,6 +81,7 @@ ui <- navbarPage(
            sidebarLayout(
              sidebarPanel(
                fileInput("file_rec", "Upload File", accept = c(".csv", ".txt",".xlsx")),
+               selectInput(inputId = "response" ,label = "Select Preferred File Format" ,choices = c("Polygon" ,"Points") ,selected = "Polygon"),
                actionButton("submit_1", "SUBMIT", class = "btn",width = "100%"),br(), br(),
                downloadButton(outputId = "download_01",label = "DOWNLOAD FOLDER!",icon = icon("download")),
                width = 4
@@ -114,6 +115,24 @@ ui <- navbarPage(
 
 
 server <- function(input, output, session) {
+  
+  #Points KML script.
+  create_kml <- function(coordinate_sets) {
+    
+    kml_doc <- xml_new_root("kml", xmlns = "http://www.opengis.net/kml/2.2")
+    document_node <- xml_add_child(kml_doc, "Document")
+    
+    for (coords in coordinate_sets) {
+      placemark <- xml_add_child(document_node, "Placemark")
+      point <- xml_add_child(placemark, "Point")
+      coord_string <- paste(coords$longitude, coords$latitude, coords$altitude, sep = ",")
+      xml_add_child(point, "coordinates", coord_string)
+    }
+    
+    return(kml_doc)
+    
+  }
+  # Create polygon kml function
   create_kml_polygon <- function(coordinate_sets) {
     # Create the root KML structure
     kml_doc <- xml_new_root("kml", xmlns = "http://www.opengis.net/kml/2.2")
@@ -171,7 +190,7 @@ server <- function(input, output, session) {
   }
   
   #~~~~~~~~~~~~~ Main Script to Read Data and Generate KML Files ~~~~~~~~~~~~#
-  file_conversion <- function(file_path) {
+  file_conversion <- function(file_path,choice) {
     # Read the Excel file
     Geograph_data <- read_xlsx(file_path) |> as.data.frame()
     needed_data <- Geograph_data[, c("First Names/Prénom", "Surname/Nom", "Farm Number", "Geographic boundaries")]
@@ -195,11 +214,18 @@ server <- function(input, output, session) {
         all_coordinates <- c(all_coordinates, all_coordinates[1])  # Close polygon
       }
       
-      # Create the KML structure
-      kml_doc <- create_kml_polygon(all_coordinates)
+      if(choice == "Polygon"){
+        # Create the KML structure
+        kml_doc <- create_kml_polygon(all_coordinates) 
+      } else if(choice == "Points") {
+        
+        kml_doc <- create_kml(all_coordinates)
+        
+      }
+     
       
       # Save KML to a temporary file
-      temp_file <- tempfile(pattern = paste(get_farmer_name,"____"), fileext = ".kml")
+      temp_file <- temp_file <- file.path(tempdir(), paste0(get_farmer_name, ".kml"))
       write_xml(kml_doc, file = temp_file)
       
       # Append to created files
@@ -215,10 +241,9 @@ server <- function(input, output, session) {
 
   reactive_files <- eventReactive(input$submit_1, {
     req(input$file_rec)  # Ensure a file is uploaded
-    
     files <- NULL
     withProgress(message = "Generating KML Files...", value = 0, {
-      files <- file_conversion(input$file_rec$datapath)  # Generate KML files
+      files <- file_conversion(input$file_rec$datapath ,choice = input$response )  # Generate KML files
       incProgress(1, detail = "Finalizing...")
     })
     
