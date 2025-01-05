@@ -362,6 +362,11 @@ server <- function(input, output, session) {
     )
   })
   
+  #Temporarily hold the unloaded file for a moment
+  Polygon_kml <- reactive({
+    st_read(input$kmltrans$datapath)
+  })
+  
   # Render the plot in the UI
   output$plot_rtrees <- renderPlot({
     req(chaku_result())  # Ensure the reactive result is available
@@ -375,9 +380,39 @@ server <- function(input, output, session) {
     },
     content = function(file) {
       req(chaku_result())  # Ensure the reactive result is available
-      sf::st_write(chaku_result()$sampled_points_sf, file, driver = "KML")
+      
+      # Read the polygon file
+      polygon_data <- Polygon_kml()
+      
+      # Extract sampled points
+      sampled_points <- chaku_result()$sampled_points_sf
+      
+      # Ensure CRS consistency
+      sampled_points <- st_transform(sampled_points, st_crs(polygon_data))
+      
+      # Drop Z-dimension from both datasets
+      polygon_data_2D <- st_zm(polygon_data, drop = TRUE)
+      sampled_points_2D <- st_zm(sampled_points, drop = TRUE)
+      
+      # Ensure attribute consistency (add missing columns if needed)
+      missing_cols_polygon <- setdiff(names(sampled_points_2D), names(polygon_data_2D))
+      missing_cols_points <- setdiff(names(polygon_data_2D), names(sampled_points_2D))
+      
+      for (col in missing_cols_polygon) {
+        polygon_data_2D[[col]] <- NA
+      }
+      for (col in missing_cols_points) {
+        sampled_points_2D[[col]] <- NA
+      }
+      
+      # Combine the two datasets
+      combined_data <- rbind(polygon_data_2D, sampled_points_2D)
+      
+      # Write combined data to KML
+      sf::st_write(combined_data, file, driver = "KML")
     }
   )
+  
 }
 
 shinyApp(ui, server)
