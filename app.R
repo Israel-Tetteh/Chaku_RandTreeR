@@ -1,3 +1,4 @@
+
 library(shiny)
 library(shinycssloaders)
 library(readxl)
@@ -6,6 +7,7 @@ library(sf)
 library(dplyr)
 library(ggplot2)
 library(shinyalert)
+library(zip)
 
 
 #~~~~~~~~~~~~~ Function to create the KML file structure with styled polygons ~~~~~~~~~~~~#
@@ -98,9 +100,6 @@ ui <- navbarPage(
                fileInput(inputId = "kmltrans",label = "File Upload",placeholder = "Upload KML File",accept = ".kml"),
                numericInput(inputId = "sample_size",label = "Enter Sample Size",value = 10 , min = 1 ,max = 100 ,step = 1),
                br(),
-               numericInput(inputId = "plt_dist",label = "Enter Planting Distance (meters)",value = 10,min = 1, max = 100 ,step = 1 ),
-               br(),
-               numericInput(inputId = "sample_dist",label = "Enter Minimum Sampling Distance (meters)" ,value = 10 ,min = 1 ,max = 100, step = 1),br(),
                textInput(inputId = "farmer_name",label = "Enter Farmer's Name",placeholder = "Alex Narh"),br(),
                actionButton(inputId = "Submit_2", label = "SUBMIT",width = "100%"),
                br(),br(),
@@ -222,7 +221,7 @@ server <- function(input, output, session) {
         kml_doc <- create_kml(all_coordinates)
         
       }
-     
+      
       
       # Save KML to a temporary file
       temp_file <- temp_file <- file.path(tempdir(), paste0(get_farmer_name, ".kml"))
@@ -236,9 +235,9 @@ server <- function(input, output, session) {
     return(created_files)
   }
   
- 
-   
-
+  
+  
+  
   reactive_files <- eventReactive(input$submit_1, {
     req(input$file_rec)  # Ensure a file is uploaded
     files <- NULL
@@ -268,14 +267,12 @@ server <- function(input, output, session) {
   )
   
   # Function to process spatial data and sample points
-  Chaku_sample_funct <- function(FILE_PATH, PLANTING_DISTANCE, SAMPLE_SIZE, MINIMUM_DISTANCE) {
-    
+  Chaku_sample_funct <- function( FILE_PATH,  SAMPLE_SIZE ) {
     # Load spatial data
     spatial_data <- st_read(FILE_PATH)
     
     # Transform data to polygon if it's POINT
     geometry_type <- st_geometry_type(spatial_data)
-    
     if (all(geometry_type == "POINT")) {
       stop("Geometry type must be polygon")
     } else if (all(geometry_type %in% c("POLYGON", "MULTIPOLYGON"))) {
@@ -285,10 +282,10 @@ server <- function(input, output, session) {
     }
     
     # Transform polygon to projected CRS for accurate distance calculations
-    polygon_data_projected <- st_transform(polygon_data, 3857)  # Web Mercator (suitable for West Africa)
+    polygon_data_projected <- st_transform(polygon_data, 3857) # Web Mercator
     
     # Grid generation
-    planting_distance <- PLANTING_DISTANCE  # Distance in meters
+    planting_distance <- 3  # Distance in meters
     bbox <- st_bbox(polygon_data_projected)
     x_seq <- seq(bbox["xmin"], bbox["xmax"], by = planting_distance)
     y_seq <- seq(bbox["ymin"], bbox["ymax"], by = planting_distance)
@@ -300,16 +297,29 @@ server <- function(input, output, session) {
     
     # Check if enough points are available
     total_points <- nrow(grid_points_within)
-    if (total_points == 0) stop("No points available within the polygon boundary.")
-    
+    if (total_points == 0) {
+      shinyalert(
+      title = "Error",
+      text = "No points available within the polygon boundary.",
+      type = "error",
+      timer = 3000  # Duration in milliseconds
+    )
+    return(NULL) 
+    }
     # User input for sampling
     sample_size <- SAMPLE_SIZE
-    if (sample_size <= 0 || sample_size > total_points) {
-      stop("Invalid sample size. Enter a number between 1 and ", total_points, ".")
+    if (sample_size <= 0 || sample_size > total_points){
+      shinyalert(
+        title = "Error",
+        text = "Invalid sample size",
+        type = "error",
+        timer = 3000  # Duration in milliseconds
+      )
+      return(NULL) 
     }
     
     # Minimum distance between sampled points
-    min_distance <- MINIMUM_DISTANCE  # Minimum distance in meters
+    min_distance <- 5  # Minimum distance in meters
     
     # Spatial thinning algorithm for sampling
     shuffled_points <- grid_points_within[sample(nrow(grid_points_within)), ]
@@ -317,7 +327,6 @@ server <- function(input, output, session) {
     
     for (i in seq_len(nrow(shuffled_points))) {
       candidate_point <- shuffled_points[i, ]
-      
       if (length(sampled_points) == 0) {
         sampled_points <- list(candidate_point)
       } else {
@@ -326,7 +335,6 @@ server <- function(input, output, session) {
           sampled_points <- append(sampled_points, list(candidate_point))
         }
       }
-      
       if (length(sampled_points) == sample_size) break
     }
     
@@ -356,13 +364,11 @@ server <- function(input, output, session) {
     req(input$kmltrans)  # Ensure file is uploaded
     Chaku_sample_funct(
       FILE_PATH = input$kmltrans$datapath,
-      PLANTING_DISTANCE = input$plt_dist,
-      SAMPLE_SIZE = input$sample_size,
-      MINIMUM_DISTANCE = input$sample_dist
+      SAMPLE_SIZE = input$sample_size
     )
   })
   
-  #Temporarily hold the unloaded file for a moment
+  # Temporarily hold the uploaded file
   Polygon_kml <- reactive({
     st_read(input$kmltrans$datapath)
   })
@@ -372,49 +378,67 @@ server <- function(input, output, session) {
     req(chaku_result())  # Ensure the reactive result is available
     chaku_result()$plot_rand
   })
-  
-  # Download the sampled points as a KML file
   output$download_1 <- downloadHandler(
-    filename = function() {
-      paste0(input$farmer_name, "_RANDOMISED.kml")
-    },
-    content = function(file) {
-      req(chaku_result())  # Ensure the reactive result is available
-      
-      # Read the polygon file
-      polygon_data <- Polygon_kml()
-      
-      # Extract sampled points
-      sampled_points <- chaku_result()$sampled_points_sf
-      
-      # Ensure CRS consistency
-      sampled_points <- st_transform(sampled_points, st_crs(polygon_data))
-      
-      # Drop Z-dimension from both datasets
-      polygon_data_2D <- st_zm(polygon_data, drop = TRUE)
-      sampled_points_2D <- st_zm(sampled_points, drop = TRUE)
-      
-      # Ensure attribute consistency (add missing columns if needed)
-      missing_cols_polygon <- setdiff(names(sampled_points_2D), names(polygon_data_2D))
-      missing_cols_points <- setdiff(names(polygon_data_2D), names(sampled_points_2D))
-      
-      for (col in missing_cols_polygon) {
-        polygon_data_2D[[col]] <- NA
-      }
-      for (col in missing_cols_points) {
-        sampled_points_2D[[col]] <- NA
-      }
-      
-      # Combine the two datasets
-      combined_data <- rbind(polygon_data_2D, sampled_points_2D)
-      
-      # Write combined data to KML
-      sf::st_write(combined_data, file, driver = "KML")
+  filename = function() {
+    paste0(input$farmer_name, "_RANDOMISED.kml")
+  },
+  content = function(file) {
+    req(chaku_result())
+    
+    # Read polygon data
+    polygon_data <- Polygon_kml()
+    
+    # Extract sampled points
+    sampled_points <- chaku_result()$sampled_points_sf
+    
+    # Ensure CRS consistency
+    sampled_points <- st_transform(sampled_points, st_crs(polygon_data))
+    
+    # Drop Z-dimension from both datasets
+    polygon_data_2D <- st_zm(polygon_data, drop = TRUE)
+    sampled_points_2D <- st_zm(sampled_points, drop = TRUE)
+    
+    # Ensure column alignment by combining column names
+    all_columns <- union(names(polygon_data_2D), names(sampled_points_2D))
+    
+    # Handle missing columns for polygon data
+    for (col in setdiff(all_columns, names(polygon_data_2D))) {
+      polygon_data_2D[[col]] <- NA
     }
-  )
+    
+    # Handle missing columns for sampled points
+    for (col in setdiff(all_columns, names(sampled_points_2D))) {
+      sampled_points_2D[[col]] <- NA
+    }
+    
+    # Reorder columns to match
+    polygon_data_2D <- polygon_data_2D[, all_columns, drop = FALSE]
+    sampled_points_2D <- sampled_points_2D[, all_columns, drop = FALSE]
+    
+    # Ensure unique column names
+    names(polygon_data_2D) <- make.unique(names(polygon_data_2D))
+    names(sampled_points_2D) <- make.unique(names(sampled_points_2D))
+    
+    # Combine polygon and sampled points
+    combined_data <- rbind(polygon_data_2D, sampled_points_2D)
+    
+    # Debugging step: Check the structure of the combined data
+    print("Combined Data Structure:")
+    print(str(combined_data))
+    
+    # Write to KML file
+    tryCatch({
+      sf::st_write(combined_data, file, driver = "KML")
+    }, error = function(e) {
+      print("Error while writing KML file:")
+      print(e)
+    })
+  }
+)
+
   
 }
 
+
 shinyApp(ui, server)
-
-
+ 
