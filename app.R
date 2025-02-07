@@ -44,7 +44,7 @@ ui <- navbarPage(
         border-radius: 15px;
         box-shadow: 0px 4px 10px rgba(0, 0, 0, 0.2);
         padding: 40px;
-        max-width: 800px;
+        max-width: 1000px;
         margin: 100px auto; /* Center the card vertically and horizontally */
         text-align: center;
       }
@@ -75,7 +75,13 @@ ui <- navbarPage(
   tabPanel(icon = icon("home"),
            "Home",
            div(id = "card-container",
-               h1("WELCOME TO CHAKU Tree SampleR")
+               h1("WELCOME TO CHAKU Tree Samplr"),hr(),
+               h4("The Chaku Tree Sampler is a tool designed to convert farmers' geopoints into KML-ready files. 
+    It also facilitates tree sampling for data collection, which can be viewed in the Google Earth app."),
+               
+               h4("Users must ensure that files intended for conversion to KML format contain the following column names, 
+    exactly as listed: 'First Names/Prénom', 'Surname/Nom', 'Farm Number', and 'Geographic boundaries'.")
+               
            )
   ),br(),
   useShinyalert(),
@@ -84,7 +90,7 @@ ui <- navbarPage(
              sidebarPanel(
                fileInput("file_rec", "Upload File", accept = c(".csv", ".txt",".xlsx")),
                selectInput(inputId = "response" ,label = "Select Preferred File Format" ,choices = c("Polygon" ,"Points") ,selected = "Polygon"),
-               actionButton("submit_1", "SUBMIT", class = "btn",width = "100%"),br(), br(),
+               actionButton("submit_1", "Convert", class = "btn",width = "100%",icon = icon("exchange")),br(), br(),
                downloadButton(outputId = "download_01",label = "DOWNLOAD FOLDER!",icon = icon("download")),
                width = 4
              ),
@@ -97,11 +103,10 @@ ui <- navbarPage(
   tabPanel("Randomize Tree Layout",
            sidebarLayout(
              sidebarPanel(
-               fileInput(inputId = "kmltrans",label = "File Upload",placeholder = "Upload KML File",accept = ".kml"),
-               numericInput(inputId = "sample_size",label = "Enter Sample Size",value = 10 , min = 1 ,max = 100 ,step = 1),
+               fileInput(inputId = "kmltrans",label = "File Upload",placeholder = "Upload KML File",accept = ".kml",multiple = TRUE),
+               numericInput(inputId = "sample_size",label = "Sample Size Required",value = 10 , min = 10 ,max = 10 ,step = 0),
                br(),
-               textInput(inputId = "farmer_name",label = "Enter Farmer's Name",placeholder = "Alex Narh"),br(),
-               actionButton(inputId = "Submit_2", label = "SUBMIT",width = "100%"),
+               actionButton(inputId = "Submit_2", label = "Randomize",width = "100%",icon = icon("random")),
                br(),br(),
                downloadButton(outputId = "download_1" , label = "DOWNLOAD FILE ",width = "100%",icon = icon("download"))
                
@@ -265,180 +270,161 @@ server <- function(input, output, session) {
     },
     contentType = "application/zip"
   )
-  
-  # Function to process spatial data and sample points
-  Chaku_sample_funct <- function( FILE_PATH,  SAMPLE_SIZE ) {
-    # Load spatial data
-    spatial_data <- st_read(FILE_PATH)
+  # Function to process and randomize a single KML file
+  Chaku_sample_funct <- function(FILE_PATH, SAMPLE_SIZE) {
+    spatial_data <- st_read(FILE_PATH, quiet = TRUE)
     
-    # Transform data to polygon if it's POINT
-    geometry_type <- st_geometry_type(spatial_data)
-    if (all(geometry_type == "POINT")) {
-      stop("Geometry type must be polygon")
-    } else if (all(geometry_type %in% c("POLYGON", "MULTIPOLYGON"))) {
-      polygon_data <- spatial_data
-    } else {
-      stop("Unsupported geometry type in the uploaded file.")
+    # Ensure it's a valid polygon
+    if (!all(st_geometry_type(spatial_data) %in% c("POLYGON", "MULTIPOLYGON"))) {
+      stop("Invalid file type. Geometry must be polygon.")
     }
     
-    # Transform polygon to projected CRS for accurate distance calculations
-    polygon_data_projected <- st_transform(polygon_data, 3857) # Web Mercator
+    # Transform CRS for accurate calculations
+    polygon_data_projected <- st_transform(spatial_data, 3857)
     
-    # Grid generation
-    planting_distance <- 3  # Distance in meters
+    # Generate grid points inside the polygon
+    planting_distance <- 3  
     bbox <- st_bbox(polygon_data_projected)
     x_seq <- seq(bbox["xmin"], bbox["xmax"], by = planting_distance)
     y_seq <- seq(bbox["ymin"], bbox["ymax"], by = planting_distance)
     grid_points <- expand.grid(x = x_seq, y = y_seq)
     grid_sf <- st_as_sf(grid_points, coords = c("x", "y"), crs = 3857)
     
-    # Filter grid points within the polygon
+    # Keep points inside the polygon
     grid_points_within <- grid_sf[st_within(grid_sf, polygon_data_projected, sparse = FALSE), ]
     
-    # Check if enough points are available
+    # Validate sample size
     total_points <- nrow(grid_points_within)
-    if (total_points == 0) {
-      shinyalert(
-      title = "Error",
-      text = "No points available within the polygon boundary.",
-      type = "error",
-      timer = 3000  # Duration in milliseconds
-    )
-    return(NULL) 
-    }
-    # User input for sampling
-    sample_size <- SAMPLE_SIZE
-    if (sample_size <= 0 || sample_size > total_points){
-      shinyalert(
-        title = "Error",
-        text = "Invalid sample size",
-        type = "error",
-        timer = 3000  # Duration in milliseconds
-      )
-      return(NULL) 
+    if (total_points == 0 || SAMPLE_SIZE > total_points) {
+      return(NULL)
     }
     
-    # Minimum distance between sampled points
-    min_distance <- 5  # Minimum distance in meters
-    
-    # Spatial thinning algorithm for sampling
+    # Random sampling
     shuffled_points <- grid_points_within[sample(nrow(grid_points_within)), ]
     sampled_points <- list()
+    min_distance <- 5  
     
     for (i in seq_len(nrow(shuffled_points))) {
       candidate_point <- shuffled_points[i, ]
-      if (length(sampled_points) == 0) {
-        sampled_points <- list(candidate_point)
-      } else {
-        distances <- st_distance(candidate_point, do.call(rbind, sampled_points))
-        if (all(as.numeric(distances) >= min_distance)) {
-          sampled_points <- append(sampled_points, list(candidate_point))
-        }
+      if (length(sampled_points) == 0 || all(as.numeric(st_distance(candidate_point, do.call(rbind, sampled_points))) >= min_distance)) {
+        sampled_points <- append(sampled_points, list(candidate_point))
       }
-      if (length(sampled_points) == sample_size) break
+      if (length(sampled_points) == SAMPLE_SIZE) break
     }
     
-    # Convert sampled points to sf object
+    # Convert to sf object
     sampled_points_sf <- do.call(rbind, sampled_points)
-    
-    # Add labels and descriptions
-    sampled_points_sf$Name <- paste0("Tree ", seq_len(sample_size))
+    sampled_points_sf$Name <- paste0("Tree ", seq_len(SAMPLE_SIZE))
     sampled_points_sf$Description <- "Sampled Tree"
     
-    # Visualization of sampled points
-    plot_rand <- ggplot() +
-      geom_sf(data = st_transform(polygon_data, st_crs(grid_points_within)), fill = "lightgreen", color = "black") +
-      geom_sf(data = st_transform(grid_points_within, st_crs(grid_points_within)), color = "darkgreen", size = 1, alpha = 0.5) +
-      geom_sf(data = st_transform(sampled_points_sf, st_crs(grid_points_within)), color = "red", size = 3) +
-      theme_minimal() +
-      labs(
-        title = "Randomly Selected Trees for Data Collection",
-        subtitle = paste(sample_size, "Trees marked as red points")
-      )
-    
-    return(list(plot_rand = plot_rand, sampled_points_sf = sampled_points_sf))
+    return(list(polygon = spatial_data, sampled_points = sampled_points_sf))
   }
   
-  # Reactive to process data when the user submits the form
-  chaku_result <- eventReactive(input$Submit_2, {
-    req(input$kmltrans)  # Ensure file is uploaded
-    Chaku_sample_funct(
-      FILE_PATH = input$kmltrans$datapath,
-      SAMPLE_SIZE = input$sample_size
-    )
-  })
-  
-  # Temporarily hold the uploaded file
-  Polygon_kml <- reactive({
-    st_read(input$kmltrans$datapath)
-  })
-  
-  # Render the plot in the UI
-  output$plot_rtrees <- renderPlot({
-    req(chaku_result())  # Ensure the reactive result is available
-    chaku_result()$plot_rand
-  })
-  output$download_1 <- downloadHandler(
-  filename = function() {
-    paste0(input$farmer_name, "_RANDOMISED.kml")
-  },
-  content = function(file) {
-    req(chaku_result())
+  # Process multiple files
+  randomized_files <- eventReactive(input$Submit_2, {
+    req(input$kmltrans)  # Ensure files are uploaded
     
-    # Read polygon data
-    polygon_data <- Polygon_kml()
+    uploaded_files <- input$kmltrans$datapath
+    original_filenames <- input$kmltrans$name  # Extract original names
+    total_files <- length(uploaded_files)
+    output_files <- c()
     
-    # Extract sampled points
-    sampled_points <- chaku_result()$sampled_points_sf
-    
-    # Ensure CRS consistency
-    sampled_points <- st_transform(sampled_points, st_crs(polygon_data))
-    
-    # Drop Z-dimension from both datasets
-    polygon_data_2D <- st_zm(polygon_data, drop = TRUE)
-    sampled_points_2D <- st_zm(sampled_points, drop = TRUE)
-    
-    # Ensure column alignment by combining column names
-    all_columns <- union(names(polygon_data_2D), names(sampled_points_2D))
-    
-    # Handle missing columns for polygon data
-    for (col in setdiff(all_columns, names(polygon_data_2D))) {
-      polygon_data_2D[[col]] <- NA
-    }
-    
-    # Handle missing columns for sampled points
-    for (col in setdiff(all_columns, names(sampled_points_2D))) {
-      sampled_points_2D[[col]] <- NA
-    }
-    
-    # Reorder columns to match
-    polygon_data_2D <- polygon_data_2D[, all_columns, drop = FALSE]
-    sampled_points_2D <- sampled_points_2D[, all_columns, drop = FALSE]
-    
-    # Ensure unique column names
-    names(polygon_data_2D) <- make.unique(names(polygon_data_2D))
-    names(sampled_points_2D) <- make.unique(names(sampled_points_2D))
-    
-    # Combine polygon and sampled points
-    combined_data <- rbind(polygon_data_2D, sampled_points_2D)
-    
-    # Debugging step: Check the structure of the combined data
-    print("Combined Data Structure:")
-    print(str(combined_data))
-    
-    # Write to KML file
-    tryCatch({
-      sf::st_write(combined_data, file, driver = "KML")
-    }, error = function(e) {
-      print("Error while writing KML file:")
-      print(e)
+    withProgress(message = "Randomizing files...", value = 0, {
+      for (i in seq_along(uploaded_files)) {
+        tryCatch({
+          result <- Chaku_sample_funct(uploaded_files[i], input$sample_size)
+          if (!is.null(result)) {
+            polygon_data <- result$polygon
+            sampled_points <- result$sampled_points
+            
+            # Ensure CRS consistency
+            sampled_points <- st_transform(sampled_points, st_crs(polygon_data))
+            
+            # Drop Z-dimension
+            polygon_data_2D <- st_zm(polygon_data, drop = TRUE)
+            sampled_points_2D <- st_zm(sampled_points, drop = TRUE)
+            
+            # Align columns
+            all_columns <- union(names(polygon_data_2D), names(sampled_points_2D))
+            
+            for (col in setdiff(all_columns, names(polygon_data_2D))) {
+              polygon_data_2D[[col]] <- NA
+            }
+            
+            for (col in setdiff(all_columns, names(sampled_points_2D))) {
+              sampled_points_2D[[col]] <- NA
+            }
+            
+            # Reorder columns
+            polygon_data_2D <- polygon_data_2D[, all_columns, drop = FALSE]
+            sampled_points_2D <- sampled_points_2D[, all_columns, drop = FALSE]
+            
+            # Ensure unique column names
+            names(polygon_data_2D) <- make.unique(names(polygon_data_2D))
+            names(sampled_points_2D) <- make.unique(names(sampled_points_2D))
+            
+            # Merge polygon and sampled points
+            combined_data <- rbind(polygon_data_2D, sampled_points_2D)
+            
+            # Correct filename issue
+            base_name <- tools::file_path_sans_ext(original_filenames[i])  # Use original filename
+            new_file_path <- file.path(tempdir(), paste0(base_name, "_randomized.kml"))
+            
+            # Save KML
+            sf::st_write(combined_data, new_file_path, driver = "KML", quiet = TRUE)
+            
+            output_files <- c(output_files, new_file_path)
+          }
+        }, error = function(e) {
+          print(paste("Error processing:", uploaded_files[i], e$message))
+        })
+        
+        incProgress(1 / total_files, detail = paste("Processing", i, "of", total_files))
+      }
     })
-  }
-)
-
+    
+    shinyalert("Done!", paste(length(output_files), "files have been randomized and saved."), type = "success", timer = 3000)
+    return(output_files)
+  })
+  
+  # Render a preview of the first randomized file
+  output$plot_rtrees <- renderPlot({
+    req(randomized_files())
+    
+    first_file <- randomized_files()[1]
+    spatial_data <- st_read(first_file, quiet = TRUE)
+    
+    ggplot() +
+      geom_sf(data = spatial_data, color = "red", size = 3,fill = "lightgreen") +
+      theme_minimal() +
+      labs(title = "Randomized Sampled Trees", subtitle = "First file preview",
+           caption = "Seeing this plot verifies that all files have been completely randomised!" ) +
+      theme( plot.title = element_text( face = "bold" ,colour = "darkred",size = 17 ),
+             plot.subtitle = element_text(face = "bold",colour = "black", size = 14),
+             plot.caption =  element_text(face = "bold",colour = "black", size = 13)
+             )
+  })
+  
+  output$download_1 <- downloadHandler(
+    filename = function() {
+      req(randomized_files())  # Ensure files exist before downloading
+      "Randomized_KML_Files.zip"
+    },
+    content = function(file) {
+      temp_dir <- tempdir()
+      zip_file_path <- file.path(temp_dir, "Randomized_KML_Files.zip")
+      
+      all_files <- randomized_files()
+      req(length(all_files) > 0)  # Ensure at least one file exists
+      
+      file.copy(all_files, temp_dir, overwrite = TRUE)
+      zip::zipr(zip_file_path, all_files)
+      file.copy(zip_file_path, file)
+    },
+    contentType = "application/zip"
+  )
   
 }
 
 
 shinyApp(ui, server)
- 
