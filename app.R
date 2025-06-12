@@ -1,6 +1,7 @@
 #---------------------------------------------------------------------------
-                #Function to create Points KML script.
+#Function to create Points KML script.
 create_kml <- function(coordinate_sets) {
+  errors <- c()
   tryCatch({
     kml_doc <- xml_new_root("kml", xmlns = "http://www.opengis.net/kml/2.2")
     document_node <- xml_add_child(kml_doc, "Document")
@@ -20,8 +21,9 @@ create_kml <- function(coordinate_sets) {
 }
 
 #---------------------------------------------------------------------------
-                    # Function to create polygon kml
+# Function to create polygon kml
 create_kml_polygon <- function(coordinate_sets) {
+  errors <- c()
   tryCatch({
     # Create the root KML structure
     kml_doc <- xml_new_root("kml", xmlns = "http://www.opengis.net/kml/2.2")
@@ -64,6 +66,7 @@ create_kml_polygon <- function(coordinate_sets) {
 #---------------------------------------------------------------------------
 # Function to process coordinate strings from the Excel file#
 process_coordinates <- function(coordinate_string) {
+  errors <- c()
   tryCatch({
     coordinate_sets <- list()
     
@@ -90,8 +93,9 @@ process_coordinates <- function(coordinate_string) {
 }
 
 #---------------------------------------------------------------------------
-            # Main Script to Read Data and Generate KML Files
+# Main Script to Read Data and Generate KML Files
 file_conversion <- function(file_path, choice) {
+  errors <- c()
   tryCatch({
     # Read the Excel file
     Geograph_data <- read_xlsx(file_path) |> as.data.frame()
@@ -156,14 +160,15 @@ file_conversion <- function(file_path, choice) {
     return(character(0))
   })
 }
-              # End of tab to generate KML Files
+# End of tab to generate KML Files
 #---------------------------------------------------------------------------
 
 
-             # Start for function to create randomized tree points
+# Start for function to create randomized tree points
 #---------------------------------------------------------------------------
-              # Function to create a combined KML with both polygon and points
+# Function to create a combined KML with both polygon and points
 create_combined_kml <- function(polygon_data, sampled_points) {
+  errors <- c()
   tryCatch({
     # Create the KML structure
     kml_doc <- xml_new_root("kml", xmlns = "http://www.opengis.net/kml/2.2")
@@ -236,8 +241,9 @@ create_combined_kml <- function(polygon_data, sampled_points) {
 }
 
 #---------------------------------------------------------------------------
-            # Function to process and randomize a single KML file
+# Function to process and randomize a single KML file
 Chaku_sample_funct <- function(FILE_PATH, SAMPLE_SIZE) {
+  errors <- c()
   tryCatch({
     # Read the KML file
     spatial_data <- st_read(FILE_PATH, quiet = TRUE)
@@ -321,9 +327,9 @@ if(!require('pacman'))install.packages('pacman')
 # Import p_load to automatically install and load packages
 library(pacman)
 pacman::p_load(shiny,shinycssloaders,
-              readxl,xml2,
-              sf,dplyr,ggplot2,
-              shinyalert,zip,bslib,fontawesome)
+               readxl,xml2,
+               sf,dplyr,ggplot2,
+               shinyalert,zip,bslib,fontawesome)
 
 
 # UI COMPONENT
