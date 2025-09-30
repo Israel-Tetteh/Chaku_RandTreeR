@@ -92,37 +92,47 @@ process_coordinates <- function(coordinate_string) {
   })
 }
 
+
 #---------------------------------------------------------------------------
 # Main Script to Read Data and Generate KML Files
 file_conversion <- function(file_path, choice) {
   errors <- c()
   tryCatch({
     # Read the Excel file
-    Geograph_data <- read_xlsx(file_path) |> as.data.frame()
+    Geograph_data <- data |> as.data.frame()
     
     # Check if required columns exist
-    required_cols <- c("First Names/Prénom", "Surname/Nom", "Farm Number", "Geographic boundaries")
-    missing_cols <- required_cols[!required_cols %in% colnames(Geograph_data)]
+    # you can make changes here if kobo is updated
+    required_cols <- grep("Farmer Name|Farm Number|Geographic boundaries", 
+                          colnames(Geograph_data), value = TRUE,ignore.case = TRUE)
     
-    if (length(missing_cols) > 0) {
-      errors$convert <- paste("Missing required columns:", paste(missing_cols, collapse = ", "))
-      return(character(0))
-    }
-    
+    # Change all NA in farmer column to "Unknown"
+    Geograph_data[is.na(Geograph_data)] <- "Unknown"
+  
+    # Validate required columns
     needed_data <- Geograph_data[, required_cols]
-    colnames(needed_data)[4] <- "geographic_boundaries"
+    
+    # convert column names to numeric and replace white spaces with _
+   colnames(needed_data) <- gsub(' ',replacement = '_',x = colnames(needed_data)) |> tolower()
+    
+   # If there is an unknown column in geographic boundaries  remove the  the entire row from needed data
+    rm_geo_rows <- which(needed_data[['geographic_boundaries']] %in% 'Unknown')
+    
+    # Update needed data
+    needed_data <- needed_data[-c(rm_geo_rows), ]
     
     # Temporary list to store file paths of generated KMLs
     created_files <- c()
-    
+     
     # Loop through rows to generate KML files
     for (take_row in seq_len(nrow(needed_data))) {
       row_hold <- needed_data[take_row, ]
       
       # Extract geographic boundaries and farmer name
       get_geopoint <- row_hold[["geographic_boundaries"]]
-      get_farmer_name <- paste(row_hold[["First Names/Prénom"]], row_hold[["Surname/Nom"]],
-                               "FARM", row_hold[["Farm Number"]], sep = "_")
+      
+      ## If names change from Kobo, you can make the changes here
+      get_farmer_name <- paste(row_hold[['farmer_name']], "FARM", row_hold[["farm_number"]], sep = "_")
       
       # Process coordinates
       all_coordinates <- process_coordinates(get_geopoint)
